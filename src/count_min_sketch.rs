@@ -30,7 +30,7 @@ impl<K: Hash> CountMinSketch<K> {
     pub fn store(&mut self, key: &K) {
         for depth_index in 0..self.depth {
             let hash = self.hash_with_seed(key, depth_index);
-            self.vec[depth_index][hash as usize] +=
+            self.vec[depth_index][hash as usize] =
                 self.vec[depth_index][hash as usize].saturating_add(1)
         }
     }
