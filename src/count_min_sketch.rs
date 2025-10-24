@@ -1,15 +1,17 @@
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::marker::PhantomData;
 
+use rayon::prelude::*;
+
 #[derive(Debug)]
-pub struct CountMinSketch<K: Hash> {
+pub struct CountMinSketch<K: Hash + Sync + Send> {
     width: usize,
     depth: usize,
     vec: Vec<Vec<u64>>,
     _phantom: PhantomData<K>,
 }
 
-impl<K: Hash> CountMinSketch<K> {
+impl<K: Hash + Sync + Send> CountMinSketch<K> {
     pub fn new(width: usize, depth: usize) -> Self {
         assert!(width > 0 && depth > 0, "Width and depth must be positive");
         CountMinSketch {
