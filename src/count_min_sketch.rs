@@ -146,3 +146,129 @@ mod proptest_tests {
         }
     }
 }
+
+#[cfg(test)]
+mod edge_case_tests {
+    use super::*;
+
+    #[test]
+    fn test_overflow_protection() {
+        let mut sketch = CountMinSketch::<String>::new(10, 3);
+        let key = "test".to_string();
+
+        // This would test that saturating_add prevents overflow
+        // In practice, we'd need many iterations to actually test overflow
+        for _ in 0..1000 {
+            sketch.store(&key);
+        }
+
+        // Should not panic due to overflow
+        let count = sketch.query(&key);
+        assert!(count >= 1000);
+    }
+
+    #[test]
+    fn test_collision_handling() {
+        // Small sketch to force collisions
+        let mut sketch = CountMinSketch::<String>::new(2, 2);
+        let keys = vec!["a", "b", "c", "d", "e"];
+
+        for key in &keys {
+            sketch.store(&key.to_string());
+        }
+
+        // All keys should have at least count 1
+        for key in &keys {
+            assert!(sketch.query(&key.to_string()) >= 1);
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "Width and depth must be positive")]
+    fn test_zero_width() {
+        let _ = CountMinSketch::<String>::new(0, 5);
+    }
+
+    #[test]
+    #[should_panic(expected = "Width and depth must be positive")]
+    fn test_zero_depth() {
+        let _ = CountMinSketch::<String>::new(10, 0);
+    }
+}
+
+#[cfg(test)]
+mod quickcheck_tests {
+    use rand::{random_range, rng};
+
+    use super::*;
+
+    #[test]
+    fn test_quickcheck_properties() {
+        use rand::prelude::*;
+
+        let mut rng = rng();
+
+        for _ in 0..100 {
+            // Run 100 random test cases
+            let width = {
+                let range = 1..100;
+                random_range(range)
+            };
+            let depth = rng.random_range(1..10);
+            let num_operations = rng.random_range(10..1000);
+
+            let mut sketch = CountMinSketch::<u64>::new(width, depth);
+            let mut reference = std::collections::HashMap::new();
+
+            for _ in 0..num_operations {
+                let key = rng.random::<u64>();
+                sketch.store(&key);
+                *reference.entry(key).or_insert(0) += 1;
+            }
+
+            // Test random subset of keys
+            for (key, &expected) in reference.iter().take(10) {
+                let estimated = sketch.query(key);
+                assert!(
+                    estimated >= expected,
+                    "CMS({}, {}): key {} - expected {}, got {}",
+                    width,
+                    depth,
+                    key,
+                    expected,
+                    estimated
+                );
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod stress_tests {
+    use super::*;
+    use std::time::Instant;
+
+    #[test]
+    fn test_large_scale() {
+        let width = 1000;
+        let depth = 7;
+        let mut sketch = CountMinSketch::<usize>::new(width, depth);
+        let num_operations = 100_000;
+
+        let start = Instant::now();
+
+        for i in 0..num_operations {
+            sketch.store(&(i % 1000)); // Only 1000 distinct keys
+        }
+
+        let duration = start.elapsed();
+        println!("Stored {} operations in {:?}", num_operations, duration);
+
+        // Verify some counts
+        for i in 0..10 {
+            let count = sketch.query(&i);
+            let expected = num_operations / 1000; // Approximately
+            assert!(count as usize >= expected);
+        }
+    }
+}
