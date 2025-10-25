@@ -3,15 +3,16 @@ use std::marker::PhantomData;
 use std::num::NonZeroUsize;
 
 #[derive(Debug)]
-pub struct CountMinSketch<K: Hash + Sync + Send> {
+pub struct CountMinSketch<K: Hash + Sync + Send + Eq> {
     width: usize,
     depth: usize,
     vec: Vec<Vec<u64>>,
     hash_builders: Vec<RandomState>,
+    counter: usize,
     _phantom: PhantomData<K>,
 }
 
-impl<K: Hash + Sync + Send> CountMinSketch<K> {
+impl<K: Hash + Sync + Send + Eq> CountMinSketch<K> {
     pub fn new(width: NonZeroUsize, depth: NonZeroUsize) -> Self {
         CountMinSketch {
             width: width.into(),
@@ -19,6 +20,7 @@ impl<K: Hash + Sync + Send> CountMinSketch<K> {
             vec: vec![vec![0; width.into()]; depth.into()],
             hash_builders: (0..depth.into()).map(|_| RandomState::new()).collect(),
             _phantom: PhantomData,
+            counter: 0,
         }
     }
 
@@ -30,6 +32,7 @@ impl<K: Hash + Sync + Send> CountMinSketch<K> {
     }
 
     pub fn store(&mut self, key: &K) {
+        self.counter += 1;
         for depth_index in 0..self.depth {
             let hash = self.hash_with_seed(key, depth_index);
             self.vec[depth_index][hash as usize] =
@@ -49,6 +52,10 @@ impl<K: Hash + Sync + Send> CountMinSketch<K> {
             })
             .min()
             .unwrap()
+    }
+
+    pub fn total_count(&self) -> usize {
+        self.counter
     }
 }
 
