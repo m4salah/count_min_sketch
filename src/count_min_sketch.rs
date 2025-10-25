@@ -1,26 +1,29 @@
 use std::hash::{BuildHasher, Hash, Hasher, RandomState};
 use std::marker::PhantomData;
 use std::num::NonZeroUsize;
+use std::sync::atomic::{AtomicU64, Ordering};
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct CountMinSketch<K: Hash + Sync + Send + Eq + Clone> {
     width: usize,
     depth: usize,
-    vec: Vec<Vec<u64>>,
+    vec: Vec<Vec<AtomicU64>>,
     hash_builders: Vec<RandomState>,
-    counter: usize,
     _phantom: PhantomData<K>,
 }
 
 impl<K: Hash + Sync + Send + Eq + Clone> CountMinSketch<K> {
     pub fn new(width: NonZeroUsize, depth: NonZeroUsize) -> Self {
+        let depth_val: usize = depth.into();
+        let width_val: usize = width.into();
         CountMinSketch {
-            width: width.into(),
-            depth: depth.into(),
-            vec: vec![vec![0; width.into()]; depth.into()],
+            width: width_val,
+            depth: depth_val,
+            vec: (0..depth_val)
+                .map(|_| (0..width_val).map(|_| AtomicU64::new(0)).collect())
+                .collect(),
             hash_builders: (0..depth.into()).map(|_| RandomState::new()).collect(),
             _phantom: PhantomData,
-            counter: 0,
         }
     }
 
@@ -32,30 +35,19 @@ impl<K: Hash + Sync + Send + Eq + Clone> CountMinSketch<K> {
     }
 
     pub fn store(&mut self, key: &K) {
-        self.counter += 1;
         for depth_index in 0..self.depth {
             let hash = self.hash_with_seed(key, depth_index);
-            self.vec[depth_index][hash as usize] =
-                self.vec[depth_index][hash as usize].saturating_add(1)
+            self.vec[depth_index][hash as usize].fetch_add(1, Ordering::Relaxed);
         }
     }
 
     pub fn query(&self, key: &K) -> u64 {
         (0..self.depth)
             .map(|depth| {
-                *self
-                    .vec
-                    .get(depth)
-                    .unwrap()
-                    .get(self.hash_with_seed(key, depth) as usize)
-                    .unwrap()
+                self.vec[depth][self.hash_with_seed(key, depth) as usize].load(Ordering::Relaxed)
             })
             .min()
             .unwrap()
-    }
-
-    pub fn total_count(&self) -> usize {
-        self.counter
     }
 
     pub fn top_k(&self, k: usize, candidates: &[K]) -> Vec<(K, u64)> {
@@ -89,7 +81,7 @@ mod proptest_tests {
             depth in 1..10usize,
             operations in prop::collection::vec(any::<String>(), 1..1000)
         ) {
-            let mut sketch = CountMinSketch::<String>::new(width, depth);
+            let mut sketch = CountMinSketch::<String>::new(NonZeroUsize::new(width).unwrap(), NonZeroUsize::new(depth).unwrap());
             let mut reference_counts = std::collections::HashMap::new();
 
             // Store all operations and track in reference map
