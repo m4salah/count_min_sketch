@@ -1,32 +1,33 @@
-use std::hash::{DefaultHasher, Hash, Hasher};
+use std::hash::{BuildHasher, Hash, Hasher, RandomState};
 use std::marker::PhantomData;
-
-use rayon::prelude::*;
 
 #[derive(Debug)]
 pub struct CountMinSketch<K: Hash + Sync + Send> {
     width: usize,
     depth: usize,
     vec: Vec<Vec<u64>>,
+    hash_builders: Vec<RandomState>,
     _phantom: PhantomData<K>,
 }
 
 impl<K: Hash + Sync + Send> CountMinSketch<K> {
     pub fn new(width: usize, depth: usize) -> Self {
         assert!(width > 0 && depth > 0, "Width and depth must be positive");
+
         CountMinSketch {
             width,
             depth,
             vec: vec![vec![0; width]; depth],
+            hash_builders: (0..depth).map(|_| RandomState::new()).collect(),
             _phantom: PhantomData,
         }
     }
 
     fn hash_with_seed(&self, key: &K, seed: usize) -> u64 {
-        let mut s = DefaultHasher::new();
-        seed.hash(&mut s);
-        key.hash(&mut s);
-        s.finish() % self.width as u64
+        assert!(seed < self.depth);
+        let mut hasher = self.hash_builders[seed].build_hasher();
+        key.hash(&mut hasher);
+        hasher.finish() % self.width as u64
     }
 
     pub fn store(&mut self, key: &K) {
