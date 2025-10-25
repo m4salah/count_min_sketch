@@ -1,5 +1,6 @@
 use std::hash::{BuildHasher, Hash, Hasher, RandomState};
 use std::marker::PhantomData;
+use std::num::NonZeroUsize;
 
 #[derive(Debug)]
 pub struct CountMinSketch<K: Hash + Sync + Send> {
@@ -11,14 +12,12 @@ pub struct CountMinSketch<K: Hash + Sync + Send> {
 }
 
 impl<K: Hash + Sync + Send> CountMinSketch<K> {
-    pub fn new(width: usize, depth: usize) -> Self {
-        assert!(width > 0 && depth > 0, "Width and depth must be positive");
-
+    pub fn new(width: NonZeroUsize, depth: NonZeroUsize) -> Self {
         CountMinSketch {
-            width,
-            depth,
-            vec: vec![vec![0; width]; depth],
-            hash_builders: (0..depth).map(|_| RandomState::new()).collect(),
+            width: width.into(),
+            depth: depth.into(),
+            vec: vec![vec![0; width.into()]; depth.into()],
+            hash_builders: (0..depth.into()).map(|_| RandomState::new()).collect(),
             _phantom: PhantomData,
         }
     }
@@ -96,7 +95,7 @@ mod proptest_tests {
             keys in prop::collection::vec(any::<String>(), 1..100),
             repetitions in 1..10usize
         ) {
-            let mut sketch = CountMinSketch::<String>::new(100, 5);
+            let mut sketch = CountMinSketch::<String>::new(NonZeroUsize::new(100).unwrap(), NonZeroUsize::new(5).unwrap());
             let mut counts = std::collections::HashMap::new();
 
             for key in &keys {
@@ -125,7 +124,7 @@ mod proptest_tests {
             stored_keys in prop::collection::vec(any::<String>(), 1..100),
             query_keys in prop::collection::vec(any::<String>(), 1..50)
         ) {
-            let mut sketch = CountMinSketch::<String>::new(100, 5);
+            let mut sketch = CountMinSketch::<String>::new(NonZeroUsize::new(100).unwrap(), NonZeroUsize::new(5).unwrap());
             let mut stored_set = std::collections::HashSet::new();
 
             // Store all stored_keys
@@ -156,7 +155,10 @@ mod edge_case_tests {
 
     #[test]
     fn test_overflow_protection() {
-        let mut sketch = CountMinSketch::<String>::new(10, 3);
+        let mut sketch = CountMinSketch::<String>::new(
+            NonZeroUsize::new(10).unwrap(),
+            NonZeroUsize::new(3).unwrap(),
+        );
         let key = "test".to_string();
 
         // This would test that saturating_add prevents overflow
@@ -173,7 +175,10 @@ mod edge_case_tests {
     #[test]
     fn test_collision_handling() {
         // Small sketch to force collisions
-        let mut sketch = CountMinSketch::<String>::new(2, 2);
+        let mut sketch = CountMinSketch::<String>::new(
+            NonZeroUsize::new(2).unwrap(),
+            NonZeroUsize::new(2).unwrap(),
+        );
         let keys = vec!["a", "b", "c", "d", "e"];
 
         for key in &keys {
@@ -184,18 +189,6 @@ mod edge_case_tests {
         for key in &keys {
             assert!(sketch.query(&key.to_string()) >= 1);
         }
-    }
-
-    #[test]
-    #[should_panic(expected = "Width and depth must be positive")]
-    fn test_zero_width() {
-        let _ = CountMinSketch::<String>::new(0, 5);
-    }
-
-    #[test]
-    #[should_panic(expected = "Width and depth must be positive")]
-    fn test_zero_depth() {
-        let _ = CountMinSketch::<String>::new(10, 0);
     }
 }
 
@@ -220,7 +213,10 @@ mod quickcheck_tests {
             let depth = rng.random_range(1..10);
             let num_operations = rng.random_range(10..1000);
 
-            let mut sketch = CountMinSketch::<u64>::new(width, depth);
+            let mut sketch = CountMinSketch::<u64>::new(
+                NonZeroUsize::new(width).unwrap(),
+                NonZeroUsize::new(depth).unwrap(),
+            );
             let mut reference = std::collections::HashMap::new();
 
             for _ in 0..num_operations {
@@ -255,7 +251,10 @@ mod stress_tests {
     fn test_large_scale() {
         let width = 1000;
         let depth = 7;
-        let mut sketch = CountMinSketch::<usize>::new(width, depth);
+        let mut sketch = CountMinSketch::<usize>::new(
+            NonZeroUsize::new(width).unwrap(),
+            NonZeroUsize::new(depth).unwrap(),
+        );
         let num_operations = 100_000;
 
         let start = Instant::now();
