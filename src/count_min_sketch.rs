@@ -2,8 +2,8 @@ use std::hash::{BuildHasher, Hash, Hasher, RandomState};
 use std::marker::PhantomData;
 use std::num::NonZeroUsize;
 
-#[derive(Debug)]
-pub struct CountMinSketch<K: Hash + Sync + Send + Eq> {
+#[derive(Debug, Clone)]
+pub struct CountMinSketch<K: Hash + Sync + Send + Eq + Clone> {
     width: usize,
     depth: usize,
     vec: Vec<Vec<u64>>,
@@ -12,7 +12,7 @@ pub struct CountMinSketch<K: Hash + Sync + Send + Eq> {
     _phantom: PhantomData<K>,
 }
 
-impl<K: Hash + Sync + Send + Eq> CountMinSketch<K> {
+impl<K: Hash + Sync + Send + Eq + Clone> CountMinSketch<K> {
     pub fn new(width: NonZeroUsize, depth: NonZeroUsize) -> Self {
         CountMinSketch {
             width: width.into(),
@@ -56,6 +56,17 @@ impl<K: Hash + Sync + Send + Eq> CountMinSketch<K> {
 
     pub fn total_count(&self) -> usize {
         self.counter
+    }
+
+    pub fn top_k(&self, k: usize, candidates: &[K]) -> Vec<(K, u64)> {
+        let mut counts: Vec<(K, u64)> = candidates
+            .iter()
+            .map(|item| (item.clone(), self.query(item)))
+            .collect();
+
+        counts.sort_by(|a, b| b.1.cmp(&a.1));
+        counts.truncate(k);
+        return counts;
     }
 }
 
