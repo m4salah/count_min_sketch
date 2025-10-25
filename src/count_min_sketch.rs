@@ -1,3 +1,4 @@
+use rayon::prelude::*;
 use std::hash::{BuildHasher, Hash, Hasher, RandomState};
 use std::marker::PhantomData;
 use std::num::NonZeroUsize;
@@ -34,11 +35,18 @@ impl<K: Hash + Sync + Send + Eq + Clone> CountMinSketch<K> {
         hasher.finish() % self.width as u64
     }
 
-    pub fn store(&mut self, key: &K) {
+    pub fn store(&self, key: &K) {
         for depth_index in 0..self.depth {
             let hash = self.hash_with_seed(key, depth_index);
             self.vec[depth_index][hash as usize].fetch_add(1, Ordering::Relaxed);
         }
+    }
+
+    pub fn store_parallel(&self, key: &K) {
+        (0..self.depth).into_par_iter().for_each(|depth_index| {
+            let hash = self.hash_with_seed(key, depth_index);
+            self.vec[depth_index][hash as usize].fetch_add(1, Ordering::Relaxed);
+        });
     }
 
     pub fn query(&self, key: &K) -> u64 {
@@ -50,6 +58,10 @@ impl<K: Hash + Sync + Send + Eq + Clone> CountMinSketch<K> {
             .unwrap()
     }
 
+    pub fn count(&self, key: &K) -> u64 {
+        return self.query(key);
+    }
+
     pub fn top_k(&self, k: usize, candidates: &[K]) -> Vec<(K, u64)> {
         let mut counts: Vec<(K, u64)> = candidates
             .iter()
@@ -59,6 +71,14 @@ impl<K: Hash + Sync + Send + Eq + Clone> CountMinSketch<K> {
         counts.sort_by(|a, b| b.1.cmp(&a.1));
         counts.truncate(k);
         return counts;
+    }
+
+    pub fn clear(&self) {
+        for row in &self.vec {
+            for counter in row {
+                counter.store(0, Ordering::Relaxed);
+            }
+        }
     }
 }
 
@@ -81,7 +101,7 @@ mod proptest_tests {
             depth in 1..10usize,
             operations in prop::collection::vec(any::<String>(), 1..1000)
         ) {
-            let mut sketch = CountMinSketch::<String>::new(NonZeroUsize::new(width).unwrap(), NonZeroUsize::new(depth).unwrap());
+            let sketch = CountMinSketch::<String>::new(NonZeroUsize::new(width).unwrap(), NonZeroUsize::new(depth).unwrap());
             let mut reference_counts = std::collections::HashMap::new();
 
             // Store all operations and track in reference map
@@ -112,7 +132,7 @@ mod proptest_tests {
             keys in prop::collection::vec(any::<String>(), 1..100),
             repetitions in 1..10usize
         ) {
-            let mut sketch = CountMinSketch::<String>::new(NonZeroUsize::new(100).unwrap(), NonZeroUsize::new(5).unwrap());
+            let sketch = CountMinSketch::<String>::new(NonZeroUsize::new(100).unwrap(), NonZeroUsize::new(5).unwrap());
             let mut counts = std::collections::HashMap::new();
 
             for key in &keys {
@@ -141,7 +161,7 @@ mod proptest_tests {
             stored_keys in prop::collection::vec(any::<String>(), 1..100),
             query_keys in prop::collection::vec(any::<String>(), 1..50)
         ) {
-            let mut sketch = CountMinSketch::<String>::new(NonZeroUsize::new(100).unwrap(), NonZeroUsize::new(5).unwrap());
+            let sketch = CountMinSketch::<String>::new(NonZeroUsize::new(100).unwrap(), NonZeroUsize::new(5).unwrap());
             let mut stored_set = std::collections::HashSet::new();
 
             // Store all stored_keys
@@ -172,7 +192,7 @@ mod edge_case_tests {
 
     #[test]
     fn test_overflow_protection() {
-        let mut sketch = CountMinSketch::<String>::new(
+        let sketch = CountMinSketch::<String>::new(
             NonZeroUsize::new(10).unwrap(),
             NonZeroUsize::new(3).unwrap(),
         );
@@ -192,7 +212,7 @@ mod edge_case_tests {
     #[test]
     fn test_collision_handling() {
         // Small sketch to force collisions
-        let mut sketch = CountMinSketch::<String>::new(
+        let sketch = CountMinSketch::<String>::new(
             NonZeroUsize::new(2).unwrap(),
             NonZeroUsize::new(2).unwrap(),
         );
@@ -230,7 +250,7 @@ mod quickcheck_tests {
             let depth = rng.random_range(1..10);
             let num_operations = rng.random_range(10..1000);
 
-            let mut sketch = CountMinSketch::<u64>::new(
+            let sketch = CountMinSketch::<u64>::new(
                 NonZeroUsize::new(width).unwrap(),
                 NonZeroUsize::new(depth).unwrap(),
             );
@@ -268,7 +288,7 @@ mod stress_tests {
     fn test_large_scale() {
         let width = 1000;
         let depth = 7;
-        let mut sketch = CountMinSketch::<usize>::new(
+        let sketch = CountMinSketch::<usize>::new(
             NonZeroUsize::new(width).unwrap(),
             NonZeroUsize::new(depth).unwrap(),
         );
