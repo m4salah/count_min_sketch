@@ -39,7 +39,14 @@ impl<K: Hash + Sync + Send> CountMinSketch<K> {
 
     pub fn query(&self, key: &K) -> u64 {
         (0..self.depth)
-            .map(|depth| self.vec[depth][self.hash_with_seed(key, depth) as usize])
+            .map(|depth| {
+                *self
+                    .vec
+                    .get(depth)
+                    .unwrap()
+                    .get(self.hash_with_seed(key, depth) as usize)
+                    .unwrap()
+            })
             .min()
             .unwrap()
     }
