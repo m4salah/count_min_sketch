@@ -1,5 +1,5 @@
 use rayon::prelude::*;
-use std::hash::{BuildHasher, Hash, Hasher, RandomState};
+use std::hash::{DefaultHasher, Hash, Hasher};
 use std::marker::PhantomData;
 use std::num::NonZeroUsize;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -9,7 +9,6 @@ pub struct CountMinSketch<K: Hash + Sync + Send + Eq + Clone> {
     width: usize,
     depth: usize,
     vec: Vec<Vec<AtomicU64>>,
-    hash_builders: Vec<RandomState>,
     _phantom: PhantomData<K>,
 }
 
@@ -23,14 +22,14 @@ impl<K: Hash + Sync + Send + Eq + Clone> CountMinSketch<K> {
             vec: (0..depth_val)
                 .map(|_| (0..width_val).map(|_| AtomicU64::new(0)).collect())
                 .collect(),
-            hash_builders: (0..depth.into()).map(|_| RandomState::new()).collect(),
             _phantom: PhantomData,
         }
     }
 
     fn hash_with_seed(&self, key: &K, seed: usize) -> u64 {
         assert!(seed < self.depth);
-        let mut hasher = self.hash_builders[seed].build_hasher();
+        let mut hasher = DefaultHasher::new();
+        seed.hash(&mut hasher);
         key.hash(&mut hasher);
         hasher.finish() % self.width as u64
     }
@@ -384,13 +383,14 @@ mod concurrency_tests {
         // can't be compared cell-for-cell.)
         for row in &conc_sketch.vec {
             let sum: u64 = row.iter().map(|c| c.load(Ordering::Relaxed)).sum();
-            assert_eq!(sum, total, "lost updates under concurrency: row sum {sum} != {total}");
+            assert_eq!(
+                sum, total,
+                "lost updates under concurrency: row sum {sum} != {total}"
+            );
         }
 
         let speedup = seq_time.as_secs_f64() / conc_time.as_secs_f64();
-        println!(
-            "threads={num_threads} seq={seq_time:?} conc={conc_time:?} speedup={speedup:.2}x"
-        );
+        println!("threads={num_threads} seq={seq_time:?} conc={conc_time:?} speedup={speedup:.2}x");
 
         assert!(
             speedup > 1.2,
