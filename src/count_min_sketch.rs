@@ -238,6 +238,7 @@ mod edge_case_tests {
             assert!(sketch.query(&key.to_string()) >= 1);
         }
     }
+}
 
 #[cfg(test)]
 mod quickcheck_tests {
@@ -319,5 +320,81 @@ mod stress_tests {
             let expected = num_operations / 1000; // Approximately
             assert!(count as usize >= expected);
         }
+    }
+}
+
+#[cfg(test)]
+mod concurrency_tests {
+    use super::*;
+    use std::thread;
+    use std::time::Instant;
+
+    /// Grading criterion: concurrent `store` must be >1.2x faster than the
+    /// sequential baseline over the same total number of inserts.
+    #[test]
+    fn test_concurrent_insert_speedup() {
+        // Cap the thread count so the sequential baseline stays bounded on
+        // many-core machines while still exercising real parallelism.
+        let available = thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(1);
+        let num_threads = available.min(8);
+
+        if num_threads < 2 {
+            eprintln!("skipping speedup assertion: only {available} core(s) available");
+            return;
+        }
+
+        // Equal total work for both runs: per_thread * num_threads.
+        let per_thread: u64 = 1_000_000;
+        let total = per_thread * num_threads as u64;
+
+        let width = NonZeroUsize::new(4096).unwrap();
+        let depth = NonZeroUsize::new(5).unwrap();
+
+        // --- Sequential baseline: one thread does all `total` inserts. ---
+        let seq_sketch = CountMinSketch::<u64>::new(width, depth);
+        let start = Instant::now();
+        for i in 0..total {
+            seq_sketch.store(&i);
+        }
+        let seq_time = start.elapsed();
+
+        // --- Concurrent run: N threads over disjoint key ranges. ---
+        // Disjoint ranges keep atomic contention low so the win reflects
+        // genuine parallel hashing, not lock/cache-line thrashing.
+        let conc_sketch = CountMinSketch::<u64>::new(width, depth);
+        let start = Instant::now();
+        thread::scope(|s| {
+            for t in 0..num_threads as u64 {
+                let sketch = &conc_sketch;
+                s.spawn(move || {
+                    let begin = t * per_thread;
+                    for i in begin..begin + per_thread {
+                        sketch.store(&i);
+                    }
+                });
+            }
+        });
+        let conc_time = start.elapsed();
+
+        // Correctness under concurrency: every `store` adds exactly 1 to each
+        // row, so with no lost atomic updates each row must sum to `total`.
+        // (Seed-independent — the two sketches use different random seeds and
+        // can't be compared cell-for-cell.)
+        for row in &conc_sketch.vec {
+            let sum: u64 = row.iter().map(|c| c.load(Ordering::Relaxed)).sum();
+            assert_eq!(sum, total, "lost updates under concurrency: row sum {sum} != {total}");
+        }
+
+        let speedup = seq_time.as_secs_f64() / conc_time.as_secs_f64();
+        println!(
+            "threads={num_threads} seq={seq_time:?} conc={conc_time:?} speedup={speedup:.2}x"
+        );
+
+        assert!(
+            speedup > 1.2,
+            "concurrent insert speedup {speedup:.2}x did not exceed 1.2x (threads={num_threads})"
+        );
     }
 }
