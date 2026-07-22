@@ -237,6 +237,85 @@ mod edge_case_tests {
             assert!(sketch.query(&key.to_string()) >= 1);
         }
     }
+
+    #[test]
+    fn test_merge_non_square() {
+        // width != depth exercises the [depth][width] indexing in merge;
+        // a square sketch would mask a transposed loop.
+        let make = || {
+            CountMinSketch::<String>::new(
+                NonZeroUsize::new(10).unwrap(),
+                NonZeroUsize::new(3).unwrap(),
+            )
+        };
+
+        let a = make();
+        let b = make();
+
+        let key = "apple".to_string();
+        for _ in 0..5 {
+            a.store(&key);
+        }
+        for _ in 0..7 {
+            b.store(&key);
+        }
+
+        // Merge must not panic on a non-square sketch.
+        a.merge(&b);
+
+        // Deterministic hashing means both sketches map `apple` to the same
+        // cells, so cell-wise summation gives the exact combined count.
+        assert_eq!(a.query(&key), 12);
+    }
+
+    #[test]
+    fn test_merge_dimension_mismatch() {
+        let a = CountMinSketch::<String>::new(
+            NonZeroUsize::new(10).unwrap(),
+            NonZeroUsize::new(3).unwrap(),
+        );
+        let b = CountMinSketch::<String>::new(
+            NonZeroUsize::new(20).unwrap(),
+            NonZeroUsize::new(3).unwrap(),
+        );
+
+        let result = std::panic::catch_unwind(|| a.merge(&b));
+        assert!(result.is_err(), "merging mismatched widths should panic");
+    }
+
+    #[test]
+    fn test_merge_preserves_disjoint_keys() {
+        // Keys stored in only one of the two sketches must survive the merge.
+        let make = || {
+            CountMinSketch::<String>::new(
+                NonZeroUsize::new(64).unwrap(),
+                NonZeroUsize::new(4).unwrap(),
+            )
+        };
+
+        let a = make();
+        let b = make();
+
+        let only_a = "left".to_string();
+        let only_b = "right".to_string();
+        let shared = "both".to_string();
+
+        for _ in 0..3 {
+            a.store(&only_a);
+        }
+        for _ in 0..4 {
+            b.store(&only_b);
+        }
+        a.store(&shared);
+        b.store(&shared);
+
+        a.merge(&b);
+
+        // Lower bounds (collisions can only inflate, never deflate).
+        assert!(a.query(&only_a) >= 3);
+        assert!(a.query(&only_b) >= 4);
+        assert!(a.query(&shared) >= 2);
+    }
 }
 
 #[cfg(test)]
