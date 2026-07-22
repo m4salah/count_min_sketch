@@ -62,6 +62,17 @@ impl<K: Hash + Sync + Send + Eq + Clone> CountMinSketch<K> {
         return self.query(key);
     }
 
+    pub fn merge(&self, other: &Self) {
+        assert!(self.width == other.width);
+        assert!(self.depth == other.depth);
+
+        for (self_row, other_row) in self.vec.iter().zip(&other.vec) {
+            for (self_cell, other_cell) in self_row.iter().zip(other_row) {
+                self_cell.fetch_add(other_cell.load(Ordering::Relaxed), Ordering::Relaxed);
+            }
+        }
+    }
+
     pub fn top_k(&self, k: usize, candidates: &[K]) -> Vec<(K, u64)> {
         let mut counts: Vec<(K, u64)> = candidates
             .iter()
@@ -227,7 +238,6 @@ mod edge_case_tests {
             assert!(sketch.query(&key.to_string()) >= 1);
         }
     }
-}
 
 #[cfg(test)]
 mod quickcheck_tests {
